@@ -41,6 +41,7 @@ class MainActivity : Activity() {
 
         btn("Старт") { start() }
         btn("Стоп") { stopService(Intent(this, TrackingService::class.java)); update() }
+        btn("Показать на карте") { startActivity(Intent(this, MapActivity::class.java)) }
         btn("Экспорт GPX") {
             val name = TrackStore.exportGpx(this)
             toast(if (name != null) "Сохранено: Загрузки/$name" else "Трек пуст")

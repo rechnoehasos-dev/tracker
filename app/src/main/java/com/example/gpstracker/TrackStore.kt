@@ -22,6 +22,21 @@ object TrackStore {
     fun count(ctx: Context): Int =
         file(ctx).takeIf { it.exists() }?.readLines()?.count { it.isNotBlank() } ?: 0
 
+    /** Точки трека как пары (широта, долгота). */
+    fun points(ctx: Context): List<Pair<Double, Double>> {
+        val f = file(ctx)
+        if (!f.exists()) return emptyList()
+        return f.readLines().mapNotNull { line ->
+            val p = line.split(';')
+            if (p.size < 3) null
+            else {
+                val lat = p[1].toDoubleOrNull()
+                val lon = p[2].toDoubleOrNull()
+                if (lat != null && lon != null) lat to lon else null
+            }
+        }
+    }
+
     fun clear(ctx: Context) {
         file(ctx).delete()
     }
