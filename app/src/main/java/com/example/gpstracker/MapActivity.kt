@@ -7,10 +7,14 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
+import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.TextView
 import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.ITileSource
+import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.tileprovider.tilesource.XYTileSource
+import org.osmdroid.util.MapTileIndex
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
@@ -29,6 +33,29 @@ class MapActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private var lastCount = -1
     private var firstFit = true
+    private var sourceIdx = 0
+
+    /** Источники карт без ключа API: название для кнопки и сам источник. */
+    private val sources: List<Pair<String, ITileSource>> = listOf(
+        "OSM" to XYTileSource(
+            "OSM-Std", 0, 19, 256, ".png",
+            arrayOf("https://tile.openstreetmap.org/"),
+            "© OpenStreetMap contributors"
+        ),
+        "Esri" to object : OnlineTileSourceBase(
+            "EsriStreet", 0, 19, 256, "",
+            arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/"),
+            "© Esri, HERE, Garmin, © OpenStreetMap contributors"
+        ) {
+            override fun getTileURLString(index: Long): String =
+                baseUrl + MapTileIndex.getZoom(index) + "/" + MapTileIndex.getY(index) + "/" + MapTileIndex.getX(index)
+        },
+        "Топо" to XYTileSource(
+            "OpenTopo", 0, 17, 256, ".png",
+            arrayOf("https://a.tile.opentopomap.org/", "https://b.tile.opentopomap.org/", "https://c.tile.opentopomap.org/"),
+            "© OpenStreetMap contributors, SRTM | © OpenTopoMap"
+        )
+    )
 
     private val refresher = object : Runnable {
         override fun run() {
@@ -41,21 +68,12 @@ class MapActivity : Activity() {
         super.onCreate(savedInstanceState)
         Configuration.getInstance().apply {
             load(applicationContext, getSharedPreferences("osmdroid", MODE_PRIVATE))
-            userAgentValue = "GpsTracker/1.2 (github.com/rechnoehasos-dev/tracker)"
+            userAgentValue = "GpsTracker/1.5 (github.com/rechnoehasos-dev/tracker)"
         }
+        val prefs = getSharedPreferences("map", MODE_PRIVATE)
+        sourceIdx = prefs.getInt("source", 0).coerceIn(0, sources.lastIndex)
 
         map = MapView(this).apply {
-            setTileSource(
-                XYTileSource(
-                    "CartoVoyager", 0, 20, 256, ".png",
-                    arrayOf(
-                        "https://a.basemaps.cartocdn.com/rastertiles/voyager/",
-                        "https://b.basemaps.cartocdn.com/rastertiles/voyager/",
-                        "https://c.basemaps.cartocdn.com/rastertiles/voyager/"
-                    ),
-                    "© OpenStreetMap contributors © CARTO"
-                )
-            )
             setMultiTouchControls(true)
             controller.setZoom(15.0)
         }
@@ -65,6 +83,17 @@ class MapActivity : Activity() {
         }
         map.overlays.add(line)
         map.overlays.add(CopyrightOverlay(this))
+        map.setTileSource(sources[sourceIdx].second)
+
+        val switcher = Button(this).apply {
+            text = "Карта: ${sources[sourceIdx].first}"
+            setOnClickListener {
+                sourceIdx = (sourceIdx + 1) % sources.size
+                prefs.edit().putInt("source", sourceIdx).apply()
+                map.setTileSource(sources[sourceIdx].second)
+                text = "Карта: ${sources[sourceIdx].first}"
+            }
+        }
 
         info = TextView(this).apply {
             setBackgroundColor(Color.argb(200, 255, 255, 255))
@@ -75,6 +104,11 @@ class MapActivity : Activity() {
 
         val root = FrameLayout(this)
         root.addView(map)
+        root.addView(switcher, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP or Gravity.END
+        ).apply { setMargins(24, 24, 24, 24) })
         root.addView(info, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,
             FrameLayout.LayoutParams.WRAP_CONTENT,
