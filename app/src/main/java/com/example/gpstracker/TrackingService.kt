@@ -32,6 +32,13 @@ class TrackingService : Service() {
         @Volatile
         var state = State.IDLE
             private set
+
+        /** Время записи без пауз, мс (живой таймер для экрана). */
+        fun elapsed(ctx: android.content.Context): Long {
+            val p = ctx.getSharedPreferences("service", android.content.Context.MODE_PRIVATE)
+            val acc = p.getLong("acc", 0)
+            return if (state == State.RECORDING) acc + (System.currentTimeMillis() - p.getLong("segStart", 0)) else acc
+        }
     }
 
     private val client by lazy { LocationServices.getFusedLocationProviderClient(this) }
@@ -54,21 +61,25 @@ class TrackingService : Service() {
             ACTION_START -> {
                 intervalSec = intent.getIntExtra(EXTRA_INTERVAL_SEC, 10).coerceAtLeast(1)
                 trackId = TrackStore.newTrack(this)
+                prefs.edit().putLong("acc", 0).putLong("segStart", System.currentTimeMillis()).apply()
                 setState(State.RECORDING)
                 startUpdates()
             }
             ACTION_PAUSE -> {
                 restoreIfNeeded()
+                if (state == State.RECORDING) addElapsed()
                 stopUpdates()
                 trackId?.let { TrackStore.breakSegment(this, it) }
                 setState(State.PAUSED)
             }
             ACTION_RESUME -> {
                 restoreIfNeeded()
+                prefs.edit().putLong("segStart", System.currentTimeMillis()).apply()
                 setState(State.RECORDING)
                 startUpdates()
             }
             ACTION_STOP -> {
+                if (state == State.RECORDING) addElapsed()
                 stopUpdates()
                 setState(State.IDLE)
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -88,6 +99,14 @@ class TrackingService : Service() {
             }
         }
         return START_STICKY
+    }
+
+    private fun addElapsed() {
+        val now = System.currentTimeMillis()
+        prefs.edit()
+            .putLong("acc", prefs.getLong("acc", 0) + (now - prefs.getLong("segStart", now)))
+            .putLong("segStart", now)
+            .apply()
     }
 
     private fun restoreIfNeeded() {

@@ -3,31 +3,37 @@ package com.example.gpstracker
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
+import android.graphics.Outline
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.Gravity
-import android.widget.Button
+import android.view.View
+import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
+import android.widget.Toast
+import com.example.gpstracker.Ui.MATCH
+import com.example.gpstracker.Ui.WRAP
+import com.example.gpstracker.Ui.lp
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.ITileSource
 import org.osmdroid.tileprovider.tilesource.OnlineTileSourceBase
 import org.osmdroid.tileprovider.tilesource.XYTileSource
-import org.osmdroid.util.MapTileIndex
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
+import org.osmdroid.util.MapTileIndex
+import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.CopyrightOverlay
+import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 
-/** Показывает записанный трек на карте OpenStreetMap и обновляет его во время записи. */
+/** Трек на карте с плеером, вариант A «Кольцо». */
 class MapActivity : Activity() {
 
     companion object {
@@ -37,19 +43,22 @@ class MapActivity : Activity() {
     }
 
     private lateinit var trackId: String
-    private val lines = mutableListOf<Polyline>()
-
     private lateinit var map: MapView
-    private lateinit var info: TextView
-    private val startMarker by lazy { Marker(map).apply { title = "Старт" } }
-    private val endMarker by lazy { Marker(map).apply { title = "Финиш" } }
+    private lateinit var subtitle: TextView
     private val handler = Handler(Looper.getMainLooper())
     private var lastCount = -1
     private var firstFit = true
     private var sourceIdx = 0
 
-    // ---- Воспроизведение ----
-    /** Точка шкалы воспроизведения: t — время в движении от старта (паузы вырезаны). */
+    // Линии трека: серая основа и пройденная часть (графитовая обводка + жёлтая середина)
+    private val baseLines = mutableListOf<Polyline>()
+    private val playedOuter = mutableListOf<Polyline>()
+    private val playedInner = mutableListOf<Polyline>()
+    private val startMarker by lazy { dot(14, Ui.SURFACE) }
+    private val endMarker by lazy { dot(14, Ui.SURFACE) }
+    private val cursor by lazy { dot(26, Ui.YELLOW) }
+
+    // Плеер
     private class PlayPt(val p: GeoPoint, val t: Long)
     private var playSegs: List<List<PlayPt>> = emptyList()
     private var total = 0L
@@ -58,40 +67,12 @@ class MapActivity : Activity() {
     private var lastFrame = 0L
     private val speeds = intArrayOf(1, 5, 10, 30, 60, 120, 300)
     private var speedIdx = 3
-    private val playedLines = mutableListOf<Polyline>()
-    private lateinit var playBtn: Button
-    private lateinit var speedBtn: Button
+    private lateinit var playBtn: FrameLayout
+    private lateinit var speedBtn: TextView
     private lateinit var seek: SeekBar
-    private lateinit var timeLabel: TextView
-    private val cursor by lazy {
-        Marker(map).apply {
-            icon = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.rgb(229, 57, 53))
-                setStroke(6, Color.WHITE)
-                setSize(48, 48)
-            }
-            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-            setOnMarkerClickListener { _, _ -> true }
-        }
-    }
-    private val player = object : Runnable {
-        override fun run() {
-            val now = SystemClock.uptimeMillis()
-            playTime += (now - lastFrame) * speeds[speedIdx]
-            lastFrame = now
-            if (playTime >= total) {
-                playTime = total
-                render(true)
-                setPlaying(false)
-                return
-            }
-            render(true)
-            handler.postDelayed(this, 33)
-        }
-    }
+    private lateinit var timeNow: TextView
+    private lateinit var timeTotal: TextView
 
-    /** Источники карт без ключа API: название для кнопки и сам источник. */
     private val sources: List<Pair<String, ITileSource>> = listOf(
         "OSM" to XYTileSource(
             "OSM-Std", 0, 19, 256, ".png",
@@ -120,56 +101,90 @@ class MapActivity : Activity() {
         }
     }
 
+    private val player = object : Runnable {
+        override fun run() {
+            val now = SystemClock.uptimeMillis()
+            playTime += (now - lastFrame) * speeds[speedIdx]
+            lastFrame = now
+            if (playTime >= total) {
+                playTime = total
+                render(true)
+                setPlaying(false)
+                return
+            }
+            render(true)
+            handler.postDelayed(this, 33)
+        }
+    }
+
+    private fun d(v: Number) = Ui.dp(this, v)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         trackId = intent.getStringExtra(EXTRA_TRACK) ?: TrackStore.currentId(this) ?: run { finish(); return }
-        title = TrackStore.title(trackId)
         Configuration.getInstance().apply {
             load(applicationContext, getSharedPreferences("osmdroid", MODE_PRIVATE))
-            userAgentValue = "GpsTracker/1.5 (github.com/rechnoehasos-dev/tracker)"
+            userAgentValue = "GpsTracker/2.0 (github.com/rechnoehasos-dev/tracker)"
         }
         val prefs = getSharedPreferences("map", MODE_PRIVATE)
         sourceIdx = prefs.getInt("source", 0).coerceIn(0, sources.lastIndex)
 
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Ui.SURFACE)
+        }
+
+        // Шапка: назад, дата трека, слои карты
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(d(8), d(16), d(16), d(8))
+        }
+        header.addView(iconButton(Icon.Kind.BACK, "Назад") { finish() }, lp(d(44), d(44)))
+        val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        titles.addView(Ui.text(this, 18f, 600, value = TrackStore.title(trackId)))
+        subtitle = Ui.text(this, 14f, 400, Ui.MUTED)
+        titles.addView(subtitle, lp(WRAP, WRAP).apply { topMargin = d(4) })
+        header.addView(titles, lp(0, WRAP, 1f).apply { marginStart = d(8) })
+        header.addView(Ui.circleButton(this, 44, Ui.SURFACE, Icon(Icon.Kind.LAYERS, Ui.GRAPHITE), 22, "Слои карты",
+            Ui.BORDER, 1) {
+            sourceIdx = (sourceIdx + 1) % sources.size
+            prefs.edit().putInt("source", sourceIdx).apply()
+            map.setTileSource(sources[sourceIdx].second)
+            Toast.makeText(this, "Карта: ${sources[sourceIdx].first}", Toast.LENGTH_SHORT).show()
+        })
+        root.addView(header, lp(MATCH, WRAP))
+
+        // Карта в скруглённой рамке
         map = MapView(this).apply {
             setMultiTouchControls(true)
+            zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
             controller.setZoom(15.0)
+            setTileSource(sources[sourceIdx].second)
         }
         map.overlays.add(CopyrightOverlay(this))
-        map.setTileSource(sources[sourceIdx].second)
-
-        val switcher = Button(this).apply {
-            text = "Карта: ${sources[sourceIdx].first}"
-            setOnClickListener {
-                sourceIdx = (sourceIdx + 1) % sources.size
-                prefs.edit().putInt("source", sourceIdx).apply()
-                map.setTileSource(sources[sourceIdx].second)
-                text = "Карта: ${sources[sourceIdx].first}"
+        val frame = FrameLayout(this).apply {
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) =
+                    outline.setRoundRect(0, 0, view.width, view.height, d(16).toFloat())
             }
+            clipToOutline = true
+            addView(map, FrameLayout.LayoutParams(MATCH, MATCH))
         }
+        root.addView(frame, lp(MATCH, 0, 1f).apply { marginStart = d(16); marginEnd = d(16) })
 
-        info = TextView(this).apply {
-            setBackgroundColor(Color.argb(200, 255, 255, 255))
-            setTextColor(Color.BLACK)
-            textSize = 16f
-            setPadding(24, 16, 24, 16)
-        }
-
-        // Панель воспроизведения
-        playBtn = Button(this).apply {
-            text = "▶"
-            textSize = 20f
-            setOnClickListener { setPlaying(!playing) }
-        }
-        speedBtn = Button(this).apply {
-            text = "x${speeds[speedIdx]}"
-            setOnClickListener {
-                speedIdx = (speedIdx + 1) % speeds.size
-                text = "x${speeds[speedIdx]}"
-            }
+        // Плеер
+        val playerBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(d(24), d(16), d(24), d(24))
         }
         seek = SeekBar(this).apply {
             max = 1000
+            splitTrack = false
+            progressTintList = android.content.res.ColorStateList.valueOf(Ui.GRAPHITE)
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Ui.BORDER)
+            thumb = Ui.oval(Ui.YELLOW, Ui.GRAPHITE, d(3)).apply { setSize(d(24), d(24)) }
+            setPadding(d(12), 0, d(12), 0)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
                     if (fromUser && total > 0) {
@@ -181,39 +196,65 @@ class MapActivity : Activity() {
                 override fun onStopTrackingTouch(sb: SeekBar) {}
             })
         }
-        timeLabel = TextView(this).apply {
-            setTextColor(Color.BLACK)
-            setPadding(8, 0, 8, 0)
-        }
-        val bar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.argb(220, 255, 255, 255))
-            setPadding(12, 8, 12, 8)
-            addView(playBtn)
-            addView(speedBtn)
-            addView(seek, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            addView(timeLabel)
-        }
+        playerBox.addView(seek, lp(MATCH, d(32)))
+        val times = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        timeNow = Ui.text(this, 14f, 400, Ui.MUTED, "0:00:00")
+        timeTotal = Ui.text(this, 14f, 400, Ui.MUTED, "0:00:00")
+        times.addView(timeNow)
+        times.addView(Ui.spacer(this))
+        times.addView(timeTotal)
+        playerBox.addView(times, lp(MATCH, WRAP).apply { topMargin = d(4) })
 
-        val root = FrameLayout(this)
-        root.addView(map)
-        root.addView(bar, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            Gravity.BOTTOM
-        ).apply { setMargins(16, 16, 16, 72) })
-        root.addView(switcher, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            Gravity.TOP or Gravity.END
-        ).apply { setMargins(24, 24, 24, 24) })
-        root.addView(info, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            Gravity.TOP or Gravity.START
-        ).apply { setMargins(24, 24, 24, 24) })
+        val buttons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        buttons.addView(Ui.circleButton(this, 48, Ui.SURFACE, Icon(Icon.Kind.REWIND, Ui.GRAPHITE), 22,
+            "Назад на 1 минуту", Ui.BORDER_STRONG, 1) {
+            playTime = (playTime - 60_000).coerceAtLeast(0)
+            render(true)
+        })
+        playBtn = Ui.circleButton(this, 80, Ui.YELLOW, Icon(Icon.Kind.PLAY, Ui.GRAPHITE), 32, "Воспроизвести") {
+            setPlaying(!playing)
+        }
+        buttons.addView(playBtn, lp(d(80), d(80)).apply { marginStart = d(24); marginEnd = d(24) })
+        speedBtn = Ui.text(this, 16f, 700, value = "x${speeds[speedIdx]}").apply {
+            gravity = Gravity.CENTER
+            background = Ui.ripple(Ui.rect(Ui.SURFACE, d(999).toFloat(), Ui.BORDER_STRONG, d(1)))
+            isClickable = true
+            contentDescription = "Скорость воспроизведения"
+            setOnClickListener {
+                speedIdx = (speedIdx + 1) % speeds.size
+                text = "x${speeds[speedIdx]}"
+            }
+        }
+        buttons.addView(speedBtn, lp(d(64), d(48)))
+        playerBox.addView(buttons, lp(MATCH, WRAP).apply { topMargin = d(16) })
+        root.addView(playerBox, lp(MATCH, WRAP))
+
         setContentView(root)
+    }
+
+    private fun iconButton(kind: Icon.Kind, desc: String, onClick: () -> Unit) = FrameLayout(this).apply {
+        background = Ui.ripple(Ui.oval(Ui.SURFACE), Ui.oval(Ui.GRAPHITE))
+        contentDescription = desc
+        isClickable = true
+        setOnClickListener { onClick() }
+        addView(ImageView(this@MapActivity).apply { setImageDrawable(Icon(kind, Ui.GRAPHITE)) },
+            FrameLayout.LayoutParams(d(22), d(22), Gravity.CENTER))
+    }
+
+    private fun dot(sizeDp: Int, fill: Int) = Marker(map).apply {
+        icon = Ui.oval(fill, Ui.GRAPHITE, d(3)).apply { setSize(d(sizeDp), d(sizeDp)) }
+        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+        setOnMarkerClickListener { _, _ -> true }
+    }
+
+    private fun line(color: Int, widthDp: Float) = Polyline(map).apply {
+        outlinePaint.color = color
+        outlinePaint.strokeWidth = d(widthDp).toFloat()
+        outlinePaint.strokeCap = android.graphics.Paint.Cap.ROUND
+        outlinePaint.strokeJoin = android.graphics.Paint.Join.ROUND
     }
 
     private fun refresh() {
@@ -222,24 +263,25 @@ class MapActivity : Activity() {
         if (count == lastCount) return
         lastCount = count
 
-        if (count == 0) {
-            info.text = "Трек пуст"
-            return
-        }
+        subtitle.text = if (count == 0) "Трек пуст" else
+            "${TrackStore.formatDistance(TrackStore.distance(segs))} · $count точек"
+        if (count == 0) return
 
-        // Каждый отрезок (между паузами) — отдельная линия, разрывы не соединяются
-        map.overlays.removeAll(lines)
-        lines.clear()
+        map.overlays.removeAll(baseLines + playedOuter + playedInner)
+        baseLines.clear(); playedOuter.clear(); playedInner.clear()
         for (seg in segs) {
-            lines += Polyline(map).apply {
-                setPoints(seg.map { GeoPoint(it.lat, it.lon) })
-                outlinePaint.color = Color.rgb(33, 150, 243)
-                outlinePaint.strokeWidth = 10f
-            }
+            baseLines += line(Ui.BORDER_STRONG, 4f).apply { setPoints(seg.map { GeoPoint(it.lat, it.lon) }) }
+            playedOuter += line(Ui.GRAPHITE, 6f)
+            playedInner += line(Ui.YELLOW, 3f)
         }
-        map.overlays.addAll(0, lines)
+        map.overlays.addAll(0, baseLines + playedOuter + playedInner)
 
-        // Шкала воспроизведения: время в движении, паузы вырезаны
+        val pts = segs.flatten().map { GeoPoint(it.lat, it.lon) }
+        startMarker.position = pts.first()
+        endMarker.position = pts.last()
+        if (!map.overlays.contains(startMarker)) map.overlays.add(startMarker)
+        if (pts.size > 1 && !map.overlays.contains(endMarker)) map.overlays.add(endMarker)
+
         var offset = 0L
         playSegs = segs.map { seg ->
             val t0 = seg.first().time
@@ -248,31 +290,11 @@ class MapActivity : Activity() {
             list
         }
         total = offset
-        map.overlays.removeAll(playedLines)
-        playedLines.clear()
-        repeat(playSegs.size) {
-            playedLines += Polyline(map).apply {
-                outlinePaint.color = Color.rgb(255, 111, 0)
-                outlinePaint.strokeWidth = 12f
-            }
-        }
-        map.overlays.addAll(lines.size, playedLines)
-        val canPlay = total > 0
-        playBtn.isEnabled = canPlay
-        seek.isEnabled = canPlay
-        if (playTime > 0) render(false) else timeLabel.text = "0:00:00 / ${TrackStore.formatDuration(total)}"
-
-        val pts = segs.flatten().map { GeoPoint(it.lat, it.lon) }
-        startMarker.position = pts.first()
-        endMarker.position = pts.last()
-        if (!map.overlays.contains(startMarker)) map.overlays.add(startMarker)
-        if (pts.size > 1 && !map.overlays.contains(endMarker)) map.overlays.add(endMarker)
-
-        val pauses = segs.size - 1
-        info.text = "Точек: $count\n" +
-            "Дистанция: ${TrackStore.formatDistance(TrackStore.distance(segs))}\n" +
-            "В движении: ${TrackStore.formatDuration(TrackStore.duration(segs))}" +
-            if (pauses > 0) "\nПауз: $pauses" else ""
+        timeTotal.text = TrackStore.formatDuration(total)
+        playBtn.isEnabled = total > 0
+        playBtn.alpha = if (total > 0) 1f else 0.4f
+        seek.isEnabled = total > 0
+        render(false)
 
         if (firstFit) {
             firstFit = false
@@ -281,7 +303,7 @@ class MapActivity : Activity() {
                     map.controller.setZoom(17.0)
                     map.controller.setCenter(pts.first())
                 } else {
-                    map.zoomToBoundingBox(BoundingBox.fromGeoPoints(pts), false, 100)
+                    map.zoomToBoundingBox(BoundingBox.fromGeoPoints(pts), false, d(48))
                 }
             }
         }
@@ -291,7 +313,10 @@ class MapActivity : Activity() {
     private fun setPlaying(p: Boolean) {
         if (p && total <= 0) return
         playing = p
-        playBtn.text = if (p) "❚❚" else "▶"
+        (playBtn.getChildAt(0) as ImageView).setImageDrawable(
+            Icon(if (p) Icon.Kind.PAUSE else Icon.Kind.PLAY, Ui.GRAPHITE)
+        )
+        playBtn.contentDescription = if (p) "Пауза" else "Воспроизвести"
         handler.removeCallbacks(player)
         if (p) {
             if (playTime >= total) playTime = 0
@@ -301,7 +326,7 @@ class MapActivity : Activity() {
         }
     }
 
-    /** Рисует положение на момент playTime: пройденный путь и маркер. */
+    /** Положение на момент playTime: пройденный путь и маркер. */
     private fun render(follow: Boolean) {
         if (playSegs.isEmpty()) return
         var cur: GeoPoint? = null
@@ -326,15 +351,17 @@ class MapActivity : Activity() {
                     break
                 }
             }
-            playedLines.getOrNull(i)?.setPoints(pts)
+            playedOuter.getOrNull(i)?.setPoints(pts)
+            playedInner.getOrNull(i)?.setPoints(pts)
         }
-        cur?.let {
+        val showCursor = playTime > 0 || playing
+        if (showCursor) cur?.let {
             cursor.position = it
             if (!map.overlays.contains(cursor)) map.overlays.add(cursor)
             if (follow) map.controller.setCenter(it)
         }
         seek.progress = if (total > 0) (playTime * 1000 / total).toInt() else 0
-        timeLabel.text = "${TrackStore.formatDuration(playTime)} / ${TrackStore.formatDuration(total)}"
+        timeNow.text = TrackStore.formatDuration(playTime)
         map.invalidate()
     }
 

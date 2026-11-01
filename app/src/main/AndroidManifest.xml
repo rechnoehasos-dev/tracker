@@ -12,7 +12,7 @@
     <application
         android:label="GPS Трекер"
         android:icon="@android:drawable/ic_menu_mylocation"
-        android:theme="@android:style/Theme.Material.Light">
+        android:theme="@style/Taviat">
 
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>

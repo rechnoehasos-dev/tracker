@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Тема «Тавиат»: белый фон, графитовый текст, жёлтый акцент, без верхней панели -->
+    <style name="Taviat" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">#FFBF2E</item>
+        <item name="android:colorAccent">#525252</item>
+        <item name="android:windowBackground">#FFFFFF</item>
+        <item name="android:statusBarColor">#FFFFFF</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">#FFFFFF</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:textColorPrimary">#525252</item>
+    </style>
+</resources>

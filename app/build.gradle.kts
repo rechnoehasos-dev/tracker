@@ -10,8 +10,8 @@ android {
         applicationId = "com.example.gpstracker"
         minSdk = 29
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.7"
+        versionCode = 9
+        versionName = "2.0"
     }
     // Постоянный ключ из секретов GitHub, чтобы новые сборки ставились поверх старых
     val ks = file("tracker.keystore")

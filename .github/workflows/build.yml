@@ -28,6 +28,13 @@ jobs:
         run: |
           if [ -n "$KS" ]; then echo "$KS" | base64 -d > app/tracker.keystore; else echo "No KEYSTORE_BASE64 secret, using random debug key"; fi
 
+      - name: Download Montserrat font (OFL)
+        run: |
+          mkdir -p app/src/main/assets/fonts
+          curl -fsSL -o app/src/main/assets/fonts/Montserrat.ttf \
+            "https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat%5Bwght%5D.ttf" \
+            || echo "Font download failed, app will use system font"
+
       - name: Build debug APK
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
