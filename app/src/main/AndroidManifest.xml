@@ -22,6 +22,7 @@
         </activity>
 
         <activity android:name=".MapActivity" android:label="Трек на карте" />
+        <activity android:name=".TracksActivity" android:label="Мои треки" />
 
         <service
             android:name=".TrackingService"

@@ -1,8 +1,9 @@
 package com.example.gpstracker
 
 import android.app.Activity
+import android.content.Context
+import android.content.Intent
 import android.graphics.Color
-import android.location.Location
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -25,9 +26,17 @@ import org.osmdroid.views.overlay.Polyline
 /** Показывает записанный трек на карте OpenStreetMap и обновляет его во время записи. */
 class MapActivity : Activity() {
 
+    companion object {
+        private const val EXTRA_TRACK = "track_id"
+        fun open(ctx: Context, trackId: String) =
+            ctx.startActivity(Intent(ctx, MapActivity::class.java).putExtra(EXTRA_TRACK, trackId))
+    }
+
+    private lateinit var trackId: String
+    private val lines = mutableListOf<Polyline>()
+
     private lateinit var map: MapView
     private lateinit var info: TextView
-    private val line by lazy { Polyline(map) }
     private val startMarker by lazy { Marker(map).apply { title = "Старт" } }
     private val endMarker by lazy { Marker(map).apply { title = "Финиш" } }
     private val handler = Handler(Looper.getMainLooper())
@@ -66,6 +75,8 @@ class MapActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        trackId = intent.getStringExtra(EXTRA_TRACK) ?: TrackStore.currentId(this) ?: run { finish(); return }
+        title = TrackStore.title(trackId)
         Configuration.getInstance().apply {
             load(applicationContext, getSharedPreferences("osmdroid", MODE_PRIVATE))
             userAgentValue = "GpsTracker/1.5 (github.com/rechnoehasos-dev/tracker)"
@@ -77,11 +88,6 @@ class MapActivity : Activity() {
             setMultiTouchControls(true)
             controller.setZoom(15.0)
         }
-        line.outlinePaint.apply {
-            color = Color.rgb(33, 150, 243)
-            strokeWidth = 10f
-        }
-        map.overlays.add(line)
         map.overlays.add(CopyrightOverlay(this))
         map.setTileSource(sources[sourceIdx].second)
 
@@ -118,30 +124,39 @@ class MapActivity : Activity() {
     }
 
     private fun refresh() {
-        val raw = TrackStore.points(this)
-        if (raw.size == lastCount) return
-        lastCount = raw.size
+        val segs = TrackStore.segments(this, trackId)
+        val count = segs.sumOf { it.size }
+        if (count == lastCount) return
+        lastCount = count
 
-        if (raw.isEmpty()) {
+        if (count == 0) {
             info.text = "Трек пуст"
             return
         }
-        val pts = raw.map { GeoPoint(it.first, it.second) }
-        line.setPoints(pts)
 
+        // Каждый отрезок (между паузами) — отдельная линия, разрывы не соединяются
+        map.overlays.removeAll(lines)
+        lines.clear()
+        for (seg in segs) {
+            lines += Polyline(map).apply {
+                setPoints(seg.map { GeoPoint(it.lat, it.lon) })
+                outlinePaint.color = Color.rgb(33, 150, 243)
+                outlinePaint.strokeWidth = 10f
+            }
+        }
+        map.overlays.addAll(0, lines)
+
+        val pts = segs.flatten().map { GeoPoint(it.lat, it.lon) }
         startMarker.position = pts.first()
         endMarker.position = pts.last()
         if (!map.overlays.contains(startMarker)) map.overlays.add(startMarker)
         if (pts.size > 1 && !map.overlays.contains(endMarker)) map.overlays.add(endMarker)
 
-        var meters = 0f
-        val tmp = FloatArray(1)
-        for (i in 1 until raw.size) {
-            Location.distanceBetween(raw[i - 1].first, raw[i - 1].second, raw[i].first, raw[i].second, tmp)
-            meters += tmp[0]
-        }
-        val dist = if (meters >= 1000) "%.2f км".format(meters / 1000) else "%.0f м".format(meters)
-        info.text = "Точек: ${pts.size}\nДистанция: $dist"
+        val pauses = segs.size - 1
+        info.text = "Точек: $count\n" +
+            "Дистанция: ${TrackStore.formatDistance(TrackStore.distance(segs))}\n" +
+            "В движении: ${TrackStore.formatDuration(TrackStore.duration(segs))}" +
+            if (pauses > 0) "\nПауз: $pauses" else ""
 
         if (firstFit) {
             firstFit = false
@@ -159,13 +174,14 @@ class MapActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        if (!::map.isInitialized) return
         map.onResume()
         handler.post(refresher)
     }
 
     override fun onPause() {
         handler.removeCallbacks(refresher)
-        map.onPause()
+        if (::map.isInitialized) map.onPause()
         super.onPause()
     }
 }
