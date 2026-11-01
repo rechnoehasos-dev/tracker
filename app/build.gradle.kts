@@ -10,8 +10,21 @@ android {
         applicationId = "com.example.gpstracker"
         minSdk = 29
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.3"
+        versionCode = 5
+        versionName = "1.4"
+    }
+    // Постоянный ключ из секретов GitHub, чтобы новые сборки ставились поверх старых
+    val ks = file("tracker.keystore")
+    val ksPass = System.getenv("KEYSTORE_PASSWORD")
+    if (ks.exists() && !ksPass.isNullOrEmpty()) {
+        signingConfigs {
+            getByName("debug") {
+                storeFile = ks
+                storePassword = ksPass
+                keyAlias = "tracker"
+                keyPassword = ksPass
+            }
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
