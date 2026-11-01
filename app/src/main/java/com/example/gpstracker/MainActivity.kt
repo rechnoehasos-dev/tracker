@@ -4,8 +4,12 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.InputType
 import android.view.Gravity
 import android.widget.Button
@@ -18,6 +22,11 @@ class MainActivity : Activity() {
 
     private lateinit var status: TextView
     private lateinit var interval: EditText
+    private lateinit var toggle: Button
+    private val handler = Handler(Looper.getMainLooper())
+    private val ticker = object : Runnable {
+        override fun run() { update(); handler.postDelayed(this, 2000) }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,8 +48,17 @@ class MainActivity : Activity() {
         fun btn(title: String, action: () -> Unit) =
             root.addView(Button(this).apply { text = title; setOnClickListener { action() } })
 
-        btn("Старт") { start() }
-        btn("Стоп") { stopService(Intent(this, TrackingService::class.java)); update() }
+        toggle = Button(this).apply {
+            textSize = 22f
+            setTextColor(Color.WHITE)
+            setPadding(0, 40, 0, 40)
+            setOnClickListener {
+                if (TrackingService.isRunning) stop() else start()
+            }
+        }
+        root.addView(toggle, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = 32 })
         btn("Показать на карте") { startActivity(Intent(this, MapActivity::class.java)) }
         btn("Экспорт GPX") {
             val name = TrackStore.exportGpx(this)
@@ -54,7 +72,17 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        update()
+        handler.post(ticker)
+    }
+
+    override fun onPause() {
+        handler.removeCallbacks(ticker)
+        super.onPause()
+    }
+
+    private fun stop() {
+        stopService(Intent(this, TrackingService::class.java))
+        status.postDelayed({ update() }, 300)
     }
 
     private fun requestPerms() {
@@ -78,8 +106,15 @@ class MainActivity : Activity() {
     }
 
     private fun update() {
-        val state = if (TrackingService.isRunning) "Запись идёт" else "Остановлено"
-        status.text = "$state\nТочек в треке: ${TrackStore.count(this)}"
+        val running = TrackingService.isRunning
+        status.text = (if (running) "● Запись идёт" else "Остановлено") +
+            "\nТочек в треке: ${TrackStore.count(this)}"
+        status.setTextColor(if (running) Color.rgb(198, 40, 40) else Color.DKGRAY)
+        toggle.text = if (running) "■  СТОП" else "▶  СТАРТ"
+        toggle.backgroundTintList = ColorStateList.valueOf(
+            if (running) Color.rgb(211, 47, 47) else Color.rgb(46, 125, 50)
+        )
+        interval.isEnabled = !running
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
