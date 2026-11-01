@@ -10,11 +10,12 @@ import android.view.Gravity
 import android.widget.FrameLayout
 import android.widget.TextView
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.tilesource.XYTileSource
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.CopyrightOverlay
 import org.osmdroid.views.overlay.Polyline
 
 /** Показывает записанный трек на карте OpenStreetMap и обновляет его во время записи. */
@@ -40,11 +41,21 @@ class MapActivity : Activity() {
         super.onCreate(savedInstanceState)
         Configuration.getInstance().apply {
             load(applicationContext, getSharedPreferences("osmdroid", MODE_PRIVATE))
-            userAgentValue = packageName
+            userAgentValue = "GpsTracker/1.2 (github.com/rechnoehasos-dev/tracker)"
         }
 
         map = MapView(this).apply {
-            setTileSource(TileSourceFactory.MAPNIK)
+            setTileSource(
+                XYTileSource(
+                    "CartoVoyager", 0, 20, 256, ".png",
+                    arrayOf(
+                        "https://a.basemaps.cartocdn.com/rastertiles/voyager/",
+                        "https://b.basemaps.cartocdn.com/rastertiles/voyager/",
+                        "https://c.basemaps.cartocdn.com/rastertiles/voyager/"
+                    ),
+                    "© OpenStreetMap contributors © CARTO"
+                )
+            )
             setMultiTouchControls(true)
             controller.setZoom(15.0)
         }
@@ -53,6 +64,7 @@ class MapActivity : Activity() {
             strokeWidth = 10f
         }
         map.overlays.add(line)
+        map.overlays.add(CopyrightOverlay(this))
 
         info = TextView(this).apply {
             setBackgroundColor(Color.argb(200, 255, 255, 255))
